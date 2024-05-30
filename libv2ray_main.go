@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +27,8 @@ import (
 	v2commlog "github.com/xtls/xray-core/common/log"
 )
 
+var pingMap sync.Map
+
 const (
 	v2Asset     = "xray.location.asset"
 	xudpBaseKey = "xray.xudp.basekey"
@@ -41,16 +42,14 @@ type V2RayPoint struct {
 	SupportSet   V2RayVPNServiceSupportsSet
 	statsManager v2stats.Manager
 
-	dialer    *ProtectedDialer
-	v2rayOP   sync.Mutex
-	closeChan chan struct{}
+	dialer  *ProtectedDialer
+	v2rayOP sync.Mutex
 
 	Vpoint    *v2core.Instance
 	IsRunning bool
 
-	DomainName           string
-	ConfigureFileContent string
-	AsyncResolve         bool
+	DomainName    string
+	ConfigureFile string
 }
 
 /*V2RayVPNServiceSupportsSet To support Android VPN mode*/
@@ -64,40 +63,12 @@ type V2RayVPNServiceSupportsSet interface {
 
 /*RunLoop Run V2Ray main loop
  */
-func (v *V2RayPoint) RunLoop(prefIPv6 bool) (err error) {
+func (v *V2RayPoint) RunLoop() (err error) {
 	v.v2rayOP.Lock()
 	defer v.v2rayOP.Unlock()
 	//Construct Context
 
 	if !v.IsRunning {
-		v.closeChan = make(chan struct{})
-		v.dialer.PrepareResolveChan()
-		go func() {
-			select {
-			// wait until resolved
-			case <-v.dialer.ResolveChan():
-				// shutdown VPNService if server name can not reolved
-				if !v.dialer.IsVServerReady() {
-					log.Println("vServer cannot resolved, shutdown")
-					v.StopLoop()
-					v.SupportSet.Shutdown()
-				}
-
-			// stop waiting if manually closed
-			case <-v.closeChan:
-			}
-		}()
-
-		if v.AsyncResolve {
-			go func() {
-				v.dialer.PrepareDomain(v.DomainName, v.closeChan, prefIPv6)
-				close(v.dialer.ResolveChan())
-			}()
-		} else {
-			v.dialer.PrepareDomain(v.DomainName, v.closeChan, prefIPv6)
-			close(v.dialer.ResolveChan())
-		}
-
 		err = v.pointloop()
 	}
 	return
@@ -105,27 +76,14 @@ func (v *V2RayPoint) RunLoop(prefIPv6 bool) (err error) {
 
 /*StopLoop Stop V2Ray main loop
  */
-func (v *V2RayPoint) StopLoop() (err error) {
+func (v *V2RayPoint) StopLoop() {
 	v.v2rayOP.Lock()
 	defer v.v2rayOP.Unlock()
 	if v.IsRunning {
-		close(v.closeChan)
 		v.shutdownInit()
 		v.SupportSet.OnEmitStatus(0, "Closed")
 	}
 	return
-}
-
-// Delegate Funcation
-func (v V2RayPoint) QueryStats(tag string, direct string) int64 {
-	if v.statsManager == nil {
-		return 0
-	}
-	counter := v.statsManager.GetCounter(fmt.Sprintf("outbound>>>%s>>>traffic>>>%s", tag, direct))
-	if counter == nil {
-		return 0
-	}
-	return counter.Set(0)
 }
 
 func (v *V2RayPoint) shutdownInit() {
@@ -137,7 +95,14 @@ func (v *V2RayPoint) shutdownInit() {
 
 func (v *V2RayPoint) pointloop() error {
 	log.Println("loading core config")
-	config, err := v2serial.LoadJSONConfig(strings.NewReader(v.ConfigureFileContent))
+
+	file, err := os.Open(v.ConfigureFile)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	config, err := v2serial.LoadJSONConfig(file)
 	if err != nil {
 		log.Println(err)
 		return err
@@ -166,21 +131,6 @@ func (v *V2RayPoint) pointloop() error {
 	return nil
 }
 
-func (v *V2RayPoint) MeasureDelay(url string) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-
-	go func() {
-		select {
-		case <-v.closeChan:
-			// cancel request if close called during meansure
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
-	return measureInstDelay(ctx, v.Vpoint, url)
-}
-
 // InitV2Env set v2 asset path
 func InitV2Env(envPath string, key string) {
 	//Initialize asset API, Since Raymond Will not let notify the asset location inside Process,
@@ -202,31 +152,41 @@ func InitV2Env(envPath string, key string) {
 	}
 }
 
-func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error) {
-	config, err := v2serial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
+func StartSimpleV2RayPoint(configFile string, key int32) error {
+	file, err := os.Open(configFile)
 	if err != nil {
-		return -1, err
+		return err
 	}
 
-	// dont listen to anything for test purpose
-	config.Inbound = nil
-	// config.App: (fakedns), log, dispatcher, InboundConfig, OutboundConfig, (stats), router, dns, (policy)
-	// keep only basic features
-	config.App = config.App[:5]
-
-	inst, err := v2core.New(config)
+	config, err := v2serial.LoadJSONConfig(file)
 	if err != nil {
-		return -1, err
+		return err
 	}
 
-	inst.Start()
-	delay, err := measureInstDelay(context.Background(), inst, url)
-	inst.Close()
-	return delay, err
+	instance, err := v2core.New(config)
+	if err != nil {
+		return err
+	}
+
+	instance.Start()
+	_, loaded := pingMap.LoadOrStore(key, instance)
+	if loaded {
+		return errors.New("point already exist")
+	}
+	return nil
+}
+
+func StopSimpleV2RayPoint(key int32) {
+	val, loaded := pingMap.LoadAndDelete(key)
+	if loaded {
+		if instance, ok := val.(*v2core.Instance); ok {
+			instance.Close()
+		}
+	}
 }
 
 /*NewV2RayPoint new V2RayPoint*/
-func NewV2RayPoint(s V2RayVPNServiceSupportsSet, adns bool) *V2RayPoint {
+func NewV2RayPoint(s V2RayVPNServiceSupportsSet) *V2RayPoint {
 	// inject our own log writer
 	v2applog.RegisterHandlerCreator(v2applog.LogType_Console,
 		func(lt v2applog.LogType,
@@ -237,9 +197,8 @@ func NewV2RayPoint(s V2RayVPNServiceSupportsSet, adns bool) *V2RayPoint {
 	dialer := NewPreotectedDialer(s)
 	v2internet.UseAlternativeSystemDialer(dialer)
 	return &V2RayPoint{
-		SupportSet:   s,
-		dialer:       dialer,
-		AsyncResolve: adns,
+		SupportSet: s,
+		dialer:     dialer,
 	}
 }
 
