@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	mobasset "golang.org/x/mobile/asset"
+	mobasset "github.com/sagernet/gomobile/asset"
 
 	v2net "github.com/xtls/xray-core/common/net"
 	v2filesystem "github.com/xtls/xray-core/common/platform/filesystem"
