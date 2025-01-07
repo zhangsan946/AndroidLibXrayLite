@@ -5,7 +5,7 @@ go 1.23.4
 require (
 	github.com/sagernet/gomobile v0.1.4
 	github.com/xtls/xray-core v1.8.25-0.20250103155023-de53a3b94e70
-	golang.org/x/sys v0.28.0
+	golang.org/x/sys v0.29.0
 )
 
 require (
