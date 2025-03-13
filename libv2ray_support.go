@@ -222,7 +222,7 @@ func (d *ProtectedDialer) Init(_ dns.Client, _ outbound.Manager) {
 func (d *ProtectedDialer) Dial(ctx context.Context,
 	src v2net.Address, dest v2net.Destination, sockopt *v2internet.SocketConfig) (net.Conn, error) {
 
-	network := dest.Network.SystemString()
+	//network := dest.Network.SystemString()
 	Address := dest.NetAddr()
 
 	// v2ray server address,
@@ -260,7 +260,7 @@ func (d *ProtectedDialer) Dial(ctx context.Context,
 	}
 
 	// v2ray connecting to "domestic" servers, no caching results
-	log.Printf("Not Using Prepared: %s,%s", network, Address)
+	// log.Printf("Not Using Prepared: %s,%s", network, Address)
 	resolved, err := d.lookupAddr(Address)
 	if err != nil {
 		return nil, err
