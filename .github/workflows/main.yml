@@ -1,41 +1,60 @@
-name: Build
+name: Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
-    inputs:
-      release_tag:
-        required: true
-        type: string
+
 jobs:
-  build:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
     runs-on: ubuntu-latest
     steps:
+    - name: Set envs
+      run: |
+        VERSION=$(echo "${{ github.ref_name }}" | sed -e 's/^v//')
+        echo "PKG_VERSION=$VERSION" >> $GITHUB_ENV
+        echo "$PKG_VERSION"
 
     - name: Checkout repository
       uses: actions/checkout@v4
-
       
-    - name: Setup Golang
-      uses: actions/setup-go@v4
-      with:
-        go-version-file: 'go.mod'
-      
-    - name: Setup JDK
-      uses: actions/setup-java@v4
-      with:
-        java-version: 17
-        distribution: 'temurin'
-        
-    - name: Setup Android SDK Tools
+    - name: Setup Android SDK
       uses: android-actions/setup-android@v3.2.0
       with:
-        cmdline-tools-version: 10406996
-        
-    - name: Setup Android NDK
-      uses: nttld/setup-ndk@v1.4.2
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '12266719'
+        packages: 'platforms;android-35 build-tools;35.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+          --channel=3 \
+          --install "ndk;29.0.13113456"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.13113456" >> $GITHUB_ENV
+        sed -i '10i\
+        \
+            ndkVersion = "29.0.13113456"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
+    
+    - name: Build libtun2socks
+      run: |
+        git clone --depth=1 https://github.com/XTLS/badvpn
+        git clone --depth=1 https://github.com/shadowsocks/libancillary
+        bash compile-tun2socks.sh
+    
+    - name: Archive
+      run: |
+        cd $GITHUB_WORKSPACE/libs && zip -r $GITHUB_WORKSPACE/tun2socks.zip .
+
+    - name: Setup Golang
+      uses: actions/setup-go@v5.4.0
       with:
-        ndk-version: 'r26b'
-        link-to-sdk: true
+        go-version-file: 'go.mod'
+
     - name: Setup Go Mobile
       run: |
         go install golang.org/x/mobile/cmd/gomobile@latest
@@ -43,15 +62,20 @@ jobs:
 
     - name: Build
       run: |
-         mkdir -p assets data
-         bash gen_assets.sh download
-         cp -v data/*.dat assets/
-         gomobile init
-         go mod tidy
-         gomobile bind -v -androidapi 19 -ldflags='-s -w' ./
-    - name: Upload AndroidLibXrayLite to release
-      uses: svenstaro/upload-release-action@v2
+        gomobile init
+        go mod tidy
+        gomobile bind -v -androidapi 21 -trimpath -ldflags='-s -w -buildid=' ./
+
+    - name: Github Release
+      uses: softprops/action-gh-release@v2
       with:
-        file: ./libv2ray*r
-        tag: ${{ github.event.inputs.release_tag }}
-        file_glob: true
+        name: Android LibXray v${{ env.PKG_VERSION }}
+        body: "Automated release for Android LibXray v${{ env.PKG_VERSION }}"
+        files: |
+          ${{ github.workspace }}/libv2ray.aar
+          ${{ github.workspace }}/tun2socks.zip
+        draft: false
+        prerelease: false
+        generate_release_notes: false
+        make_latest: true
+        token: ${{ secrets.GITHUB_TOKEN }}
