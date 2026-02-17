@@ -7,7 +7,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
+	"syscall"
 
 	coreapplog "github.com/xtls/xray-core/app/log"
 	corecommlog "github.com/xtls/xray-core/common/log"
@@ -16,8 +18,13 @@ import (
 	corestats "github.com/xtls/xray-core/features/stats"
 	coreserial "github.com/xtls/xray-core/infra/conf/serial"
 	_ "github.com/xtls/xray-core/main/distro/all"
+	coreinternet "github.com/xtls/xray-core/transport/internet"
 	mobasset "golang.org/x/mobile/asset"
 )
+
+type DialerController interface {
+	ProtectFd(int) bool
+}
 
 var pingMap sync.Map
 
@@ -25,15 +32,16 @@ var pingMap sync.Map
 const (
 	coreAsset   = "xray.location.asset"
 	xudpBaseKey = "xray.xudp.basekey"
+	tunFdKey    = "xray.tun.fd"
 )
 
 // CoreController represents a controller for managing Xray core instance lifecycle
 type CoreController struct {
 	ConfigureFile string
 	IsRunning     bool
-	statsManager  corestats.Manager
-	coreMutex     sync.Mutex
 	coreInstance  *core.Instance
+	coreMutex     sync.Mutex
+	statsManager  corestats.Manager
 }
 
 // setEnvVariable safely sets an environment variable and logs any errors encountered.
@@ -67,9 +75,24 @@ func InitCoreEnv(envPath string, key string) {
 	}
 }
 
+func registerDialerController(controller func(fd uintptr)) {
+	if err := coreinternet.RegisterDialerController(func(network, address string, conn syscall.RawConn) error {
+		return conn.Control(controller)
+	}); err != nil {
+		log.Printf("Failed to register dialer controller: %v", err)
+	}
+}
+
+// AddCtrlFunc allows to call android protect function after socket is created
+func RegisterDialerController(controller DialerController) {
+	registerDialerController(func(fd uintptr) {
+		controller.ProtectFd(int(fd))
+	})
+}
+
 // NewCoreController initializes and returns a new CoreController instance
 // Sets up the console log handler and associates it with the provided callback handler
-func NewCoreController() *CoreController {
+func NewCoreController(controller DialerController) *CoreController {
 	// Register custom logger
 	if err := coreapplog.RegisterHandlerCreator(
 		coreapplog.LogType_Console,
@@ -80,6 +103,8 @@ func NewCoreController() *CoreController {
 		log.Printf("Failed to register log handler: %v", err)
 	}
 
+	RegisterDialerController(controller)
+
 	return &CoreController{
 		IsRunning: false,
 	}
@@ -88,9 +113,11 @@ func NewCoreController() *CoreController {
 // StartLoop initializes and starts the core processing loop
 // Thread-safe method that configures and runs the Xray core with the provided configuration
 // Returns immediately if the core is already running
-func (x *CoreController) StartLoop() (err error) {
+func (x *CoreController) StartLoop(tunFd int32) (err error) {
 	x.coreMutex.Lock()
 	defer x.coreMutex.Unlock()
+
+	setEnvVariable(tunFdKey, strconv.Itoa(int(tunFd)))
 
 	if x.IsRunning {
 		log.Println("Core is already running")

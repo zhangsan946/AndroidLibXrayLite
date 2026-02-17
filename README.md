@@ -1,6 +1,6 @@
 # AndroidLibXrayLite
 
-## Build requirements
+## Prerequisites
 * JDK
 * Android SDK
 * Go
@@ -15,7 +15,7 @@
 3. `go mod tidy -v`
 4. `gomobile bind -v -androidapi 21 -trimpath -ldflags="-s -w -buildid=" ./`
 
-## To update go mod at latest/specific commit
+## To update go mod to the latest/specific commit
 
 ```
 go get github.com/xtls/xray-core@latest
