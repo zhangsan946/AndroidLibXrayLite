@@ -36,16 +36,6 @@ jobs:
           --channel=3 \
           --install "ndk;29.0.13113456"
         echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.13113456" >> $GITHUB_ENV
-    
-    - name: Build libtun2socks
-      run: |
-        git clone --depth=1 https://github.com/XTLS/badvpn
-        git clone --depth=1 https://github.com/shadowsocks/libancillary
-        bash compile-tun2socks.sh
-    
-    - name: Archive
-      run: |
-        cd $GITHUB_WORKSPACE/libs && zip -r $GITHUB_WORKSPACE/tun2socks.zip .
 
     - name: Setup Golang
       uses: actions/setup-go@v5.4.0
@@ -70,7 +60,6 @@ jobs:
         body: "Automated release for Android LibXray v${{ env.PKG_VERSION }}"
         files: |
           ${{ github.workspace }}/libv2ray.aar
-          ${{ github.workspace }}/tun2socks.zip
         draft: false
         prerelease: false
         generate_release_notes: false
