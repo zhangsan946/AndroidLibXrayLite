@@ -21,8 +21,8 @@ jobs:
         echo "$PKG_VERSION"
 
     - name: Checkout repository
-      uses: actions/checkout@v4
-      
+      uses: actions/checkout@v6.0.0
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3.2.0
       with:
@@ -38,7 +38,7 @@ jobs:
         echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.13113456" >> $GITHUB_ENV
 
     - name: Setup Golang
-      uses: actions/setup-go@v5.4.0
+      uses: actions/setup-go@v6.1.0
       with:
         go-version-file: 'go.mod'
 
